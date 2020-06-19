@@ -23,9 +23,9 @@ type ScanParams struct {
 
 // ScanContext is a container for all the data about a scan for keys.
 type ScanContext struct {
-	Params    ScanParams      // Configuration options.
-	FoundKeys []OwnedPubKey   // All the keys that have been found from files and will be checked.
-	Problems  []PubKeyProblem // Any problems found during the scan.
+	Params    ScanParams    // Configuration options.
+	FoundKeys []OwnedPubKey // All the keys that have been found from files and will be checked.
+	Problems  ProblemSet    // Any problems found during the scan.
 }
 
 type PKProblemType uint
@@ -37,9 +37,16 @@ const (
 	// KeyTypeDeprecated // TODO Later?
 )
 
+// GetProblemTypeText gets a textual description from numeric problem class ID.
 func GetProblemTypeText(pt PKProblemType) string {
 	problemTypeTexts := []string{"No Problem", "Forbidden Key", "Duplicate Key"}
 	return problemTypeTexts[uint(pt)]
+}
+
+// ProblemSet is contained by ScanContext to classify the problems we find.
+type ProblemSet struct {
+	ForbiddenKeys []PubKeyProblem
+	DuplicateKeys []PubKeyProblem
 }
 
 // PubKeyProblem contains one problem found during a scan, along with the keys that were problematic.
@@ -79,8 +86,7 @@ func GatherKeysFromFiles(filenames []string) []OwnedPubKey {
 		log.WithFields(log.Fields{"file": name}).Debug("Getting keys from new file")
 		keys, err := GetOwnedPubKeysFromFile(name)
 		if err != nil {
-			// TODO: proper error handling
-			panic(err)
+			log.Error(err)
 		}
 		numKeys += len(keys)
 		for _, key := range keys {
@@ -102,7 +108,12 @@ func (ctx *ScanContext) ScanKeysForProblems() bool {
 		if isProblem {
 			anyProblems = true
 			log.WithFields(log.Fields{"class": keyProblem.ProblemType}).Debug("Problem detected")
-			ctx.Problems = append(ctx.Problems, keyProblem)
+			if keyProblem.ProblemType == KeyForbidden {
+				ctx.Problems.ForbiddenKeys = append(ctx.Problems.ForbiddenKeys, keyProblem)
+			}
+			if keyProblem.ProblemType == DuplicateKey {
+				ctx.Problems.DuplicateKeys = append(ctx.Problems.DuplicateKeys, keyProblem)
+			}
 		}
 	}
 	return anyProblems
@@ -116,7 +127,8 @@ func (ctx *ScanContext) IsKeyAProblem(k OwnedPubKey) (bool, PubKeyProblem) {
 		return false, PubKeyProblem{}
 	}
 	if ctx.IsKeyForbidden(k) {
-		p := PubKeyProblem{ProblemType: KeyForbidden, ProblemKey: k}
+		forbidding := ctx.FindKeysForbidding(k)
+		p := PubKeyProblem{ProblemType: KeyForbidden, ProblemKey: k, RelatedKeys: forbidding}
 		return true, p
 	}
 	if dups := ctx.GetDuplicatesOf(k); len(dups) != 0 {
@@ -136,13 +148,25 @@ func (ctx *ScanContext) IsKeyForbidden(k OwnedPubKey) bool {
 	return IsKeyInSlice(k, ctx.Params.ForbiddenKeys)
 }
 
+// FindKeysForbidding returns the actual entries in forbiddenkeys that will cause a key to be marked as forbidden.
+// There's almost certainly some further abstraction that would remove redundancy around this file but I'm real tired.
+func (ctx *ScanContext) FindKeysForbidding(k OwnedPubKey) []OwnedPubKey {
+	results := make([]OwnedPubKey, 0)
+	for _, opk := range ctx.Params.ForbiddenKeys {
+		if k.HasSameKeyAs(opk) {
+			results = append(results, opk)
+		}
+	}
+	return results
+}
+
 // GetDuplicatesOf finds and returns duplicates of an OwnedPubKey k in the ScanContext's FoundKeys.
 func (ctx *ScanContext) GetDuplicatesOf(k OwnedPubKey) []OwnedPubKey {
 	results := make([]OwnedPubKey, 0)
 	for _, opk := range ctx.FoundKeys {
 		if k.HasSameKeyAs(opk) {
-			// Skip an opk that has the *exact* same contents: i.e. either the original k, or a copy of the same key from the same source file.
-			if !k.HasAllSameDataAs(opk) {
+			// Skip any opk that comes from the same source.
+			if k.SourceFile != opk.SourceFile {
 				results = append(results, opk)
 			}
 		}
@@ -169,8 +193,8 @@ func (sp *ScanParams) ShouldIgnoreOwner(s string) bool {
 func UIDForUserIsBelow(lb int, username string) bool {
 	uid, err := getUIDForUser(username)
 	if err != nil {
-		// TODO: handle properly... somehow
-		panic(err)
+		log.Error(err)
+		return false // There's not much we can do in the case of error, so... return false? HACK
 	}
 	if uid < lb {
 		return true

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"golang.org/x/crypto/ssh"
 	"io/ioutil"
 )
@@ -13,7 +12,8 @@ type OwnedPubKey struct {
 	OwnerID    int           // The uid of that user
 	Key        ssh.PublicKey // The underlying key struct, contains key bytes, comments, options
 	SourceFile string        // The file the key came from
-	//SourceLine int // TODO: the line in that file the key came from
+	SourceLine int           // The line in that file the key came from
+	Comment    string        // The comment on that key in the source file
 }
 
 // GetOwnedPubKeysFromFile attempts to get all the keys from an authorized_keys file and return them
@@ -29,18 +29,24 @@ func GetOwnedPubKeysFromFile(filename string) ([]OwnedPubKey, error) {
 		return []OwnedPubKey{}, err
 	}
 
-	keys := ParseKeysFromBytes(fileBytes)
+	keys, lineNums, comments, err := ParseKeysFromBytes(fileBytes)
+	if err != nil {
+		return []OwnedPubKey{}, err
+	}
 	ownedKeys := make([]OwnedPubKey, 0)
-	for _, v := range keys {
-		ownedKeys = append(ownedKeys, OwnedPubKey{Owner: owner, OwnerID: uid, SourceFile: filename, Key: v})
+	for i, v := range keys {
+		ownedKeys = append(ownedKeys, OwnedPubKey{Owner: owner, OwnerID: uid, SourceFile: filename, Key: v, SourceLine: lineNums[i], Comment: comments[i]})
 	}
 	return ownedKeys, nil
 }
 
 // This is a wrapper around ParseAuthorizedKey to let it read more than one from a byteslice (i.e. file contents).
-// TODO: compare input to remainder as you go, to work out which line of the file each key is on and add that to the OwnedPubKey struct.
-func ParseKeysFromBytes(in []byte) []ssh.PublicKey {
+func ParseKeysFromBytes(in []byte) ([]ssh.PublicKey, []int, []string, error) {
 	keys := make([]ssh.PublicKey, 0)
+	lineNums := make([]int, 0)
+	comments := make([]string, 0)
+
+	// remainder is carried over between loop iterations below and used to track progress through a file('s bytes).
 	var remainder []byte
 	remainder = in
 
@@ -49,15 +55,16 @@ func ParseKeysFromBytes(in []byte) []ssh.PublicKey {
 		// func ParseAuthorizedKey(in []byte) (out PublicKey, comment string, options []string, rest []byte, err error)
 		var newKey ssh.PublicKey
 		var err error
-		newKey, _, _, remainder, err = ssh.ParseAuthorizedKey(remainder)
-		fmt.Println("Key line: ", getKeyLine(in, remainder))
+		var comment string
+		newKey, comment, _, remainder, err = ssh.ParseAuthorizedKey(remainder)
 		if err != nil {
-			// TODO: Work out what to do with errors here
-			fmt.Println(err)
+			return nil, nil, nil, err
 		}
 		keys = append(keys, newKey)
+		lineNums = append(lineNums, getKeyLine(in, remainder))
+		comments = append(comments, comment)
 	}
-	return keys
+	return keys, lineNums, comments, nil
 }
 
 // The key parser takes chunks off the input and leaves the rest in `remainder`.
