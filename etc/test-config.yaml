@@ -1,0 +1,20 @@
+# A list of glob strings that are expanded into files to get public keys from
+# target_globs: ["/home/*/.ssh/authorized_keys", "/home/*/.ssh/authorized_keys2"]
+target_globs: ["./test-files/authorized_keys_?"]
+
+# A list of files to get explicitly permitted keys from. 
+# These keys will be ignored when checking for problems.
+permitted_key_files: ["./test-files/permitted_keys"]
+
+# A list of files to get forbidden keys from.
+# Permitting overrides forbidding.
+forbidden_key_files: ["./test-files/forbidden_keys"]
+
+# A list of users who get a free pass from problems.
+# Their keys will still be included in duplicate checks,
+#  but their keys will never be flagged as problems.
+ignored_owners: []
+
+# Ignore users with UIDs below this number.
+# As ignored owners, but with a numeric bracket.
+lower_uid_bound: 500
