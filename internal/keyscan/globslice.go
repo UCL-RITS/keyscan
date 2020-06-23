@@ -23,6 +23,7 @@ func GetPathsByGlob(g []string) ([]string, error) {
 			log.Error(err)
 		}
 		for _, m := range matches {
+			log.WithFields(log.Fields{"path": m}).Debug("Getting canonical path for match")
 			m = filepath.Clean(m)
 			if !filepath.IsAbs(m) {
 				m, err = filepath.Abs(m)
