@@ -30,6 +30,7 @@ import (
 )
 
 var cfgFile string
+var logLevel string
 
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
@@ -60,11 +61,15 @@ func init() {
 	// will be global for your application.
 
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default: /etc/keyscan/config.yaml)")
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "loglevel", "", "logging level (error|warn|info|debug) (default: warn)")
+	rootCmd.PersistentFlags().StringVar(&logLevel, "log_level", "l", "logging level (panic|fatal|error|warn|info|debug|trace) (default: warn)")
+
+	if err := viper.BindPFlag("log_level", rootCmd.PersistentFlags().Lookup("log_level")); err != nil {
+		log.Fatal("Internal problem: unable to bind flag:", err)
+	}
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
+	// rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
 // initConfig reads in config file and ENV variables if set.
@@ -83,11 +88,37 @@ func initConfig() {
 	viper.SetDefault("forbidden_key_files", []string{"/etc/keyscan/forbidden_keys"})
 	viper.SetDefault("ignored_owners", []string{})
 	viper.SetDefault("lower_uid_bound", 500)
+	viper.SetDefault("log_level", "warn")
 
 	viper.AutomaticEnv() // read in environment variables that match
 
 	// If a config file is found, read it in.
 	if err := viper.ReadInConfig(); err == nil {
+		setLogLevel(viper.GetString("log_level"))
 		log.Info("Using config file:", viper.ConfigFileUsed())
+	} else {
+		setLogLevel(viper.GetString("log_level"))
+		log.Warn("No config file found, using defaults")
+	}
+}
+
+func setLogLevel(level string) {
+	switch level {
+	case "panic":
+		log.SetLevel(log.PanicLevel)
+	case "fatal":
+		log.SetLevel(log.FatalLevel)
+	case "error":
+		log.SetLevel(log.ErrorLevel)
+	case "warn":
+		log.SetLevel(log.WarnLevel)
+	case "info":
+		log.SetLevel(log.InfoLevel)
+	case "debug":
+		log.SetLevel(log.DebugLevel)
+	case "trace":
+		log.SetLevel(log.TraceLevel)
+	default:
+		log.Fatal("invalid logging level requested")
 	}
 }
