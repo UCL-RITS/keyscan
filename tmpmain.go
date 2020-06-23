@@ -6,6 +6,12 @@ import (
 
 func main() {
 	log.SetLevel(log.DebugLevel)
+	ctx := CreateContextFromConfig("config.yaml")
+	ctx.Go()
+}
+
+func old() {
+	log.SetLevel(log.DebugLevel)
 
 	c := &ScanContext{}
 	c.GatherForbiddenKeysFromFiles([]string{"test-files/forbidden_keys"})

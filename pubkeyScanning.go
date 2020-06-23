@@ -4,28 +4,40 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-// Gets complete list of user home directories, scans all authorized_keys and authorized_keys2 files for duplicates,
-//  ignoring all keys in a permitted list, treating all keys in the forbidden list as if they were duplicated,
-//  and ignoring all files owned by users or groups in the ignore lists.
-//func ScanAllAuthorizedKeys(s *ScanParams) {
+// FromConfig creates a ScanContext with parameters set from a config file.
+func CreateContextFromConfig(configfile string) *ScanContext {
+	// GetParamsFromFile is in its own file to keep the extra dep contained.
+	params := GetParamsFromConfig(configfile)
+	ctx := &ScanContext{Params: params}
+	return ctx
+}
 
-//}
+// Go runs the whole scan based on params.
+func (ctx *ScanContext) Go() {
+	ctx.GatherKeysToScanFromGlobs(ctx.Params.TargetGlobs)
+	ctx.GatherForbiddenKeysFromFiles(ctx.Params.PermittedKeyFiles)
+	ctx.GatherPermittedKeysFromFiles(ctx.Params.ForbiddenKeyFiles)
+	ctx.ScanKeysForProblems()
+	ctx.PrintProblemReport()
+}
 
 // ScanParams contains all the lists of things we need to check for while scanning for duplicate public keys.
 type ScanParams struct {
-	TargetFiles   []string      // List of files to parse and scan keys from.
-	PermittedKeys []OwnedPubKey // Keys that are explicitly allowed to be owned by multiple users.
-	ForbiddenKeys []OwnedPubKey // Keys that are cannot be used by any user.
-	IgnoredOwners []string      // Users whose keys are ignored in scans.
-	LowerUIDBound int           // Ignore system users, with UIDs below this. (e.g. root, nobody, cups)
+	TargetGlobs       []string // List of files to parse and scan keys from.
+	PermittedKeyFiles []string // List of files containing keys that are explicitly allowed to be owned by multiple users.
+	ForbiddenKeyFiles []string // List of files containing keys that cannot be used by any user.
+	IgnoredOwners     []string // Users whose keys are ignored in scans.
+	LowerUIDBound     int      // Ignore system users, with UIDs below this. (e.g. root, nobody, cups)
 	// IgnoredGroups []string // TODO Later?
 }
 
 // ScanContext is a container for all the data about a scan for keys.
 type ScanContext struct {
-	Params    ScanParams    // Configuration options.
-	FoundKeys []OwnedPubKey // All the keys that have been found from files and will be checked.
-	Problems  ProblemSet    // Any problems found during the scan.
+	Params        ScanParams    // Configuration options.
+	FoundKeys     []OwnedPubKey // All the keys that have been found from files and will be checked.
+	PermittedKeys []OwnedPubKey // Keys that are explicitly allowed to be owned by multiple users.
+	ForbiddenKeys []OwnedPubKey // Keys that are cannot be used by any user.
+	Problems      ProblemSet    // Any problems found during the scan.
 }
 
 type PKProblemType uint
@@ -63,6 +75,14 @@ func appendEachKey(a []OwnedPubKey, b []OwnedPubKey) []OwnedPubKey {
 	return a
 }
 
+func (ctx *ScanContext) GatherKeysToScanFromGlobs(globs []string) {
+	filenames, err := GetPathsByGlob(ctx.Params.TargetGlobs)
+	if err != nil {
+		log.Error(err)
+	}
+	ctx.GatherKeysToScanFromFiles(filenames)
+}
+
 func (ctx *ScanContext) GatherKeysToScanFromFiles(filenames []string) {
 	opks := GatherKeysFromFiles(filenames)
 	ctx.FoundKeys = appendEachKey(ctx.FoundKeys, opks)
@@ -70,12 +90,12 @@ func (ctx *ScanContext) GatherKeysToScanFromFiles(filenames []string) {
 
 func (ctx *ScanContext) GatherForbiddenKeysFromFiles(filenames []string) {
 	opks := GatherKeysFromFiles(filenames)
-	ctx.Params.ForbiddenKeys = appendEachKey(ctx.Params.ForbiddenKeys, opks)
+	ctx.ForbiddenKeys = appendEachKey(ctx.ForbiddenKeys, opks)
 }
 
 func (ctx *ScanContext) GatherPermittedKeysFromFiles(filenames []string) {
 	opks := GatherKeysFromFiles(filenames)
-	ctx.Params.PermittedKeys = appendEachKey(ctx.Params.PermittedKeys, opks)
+	ctx.PermittedKeys = appendEachKey(ctx.PermittedKeys, opks)
 }
 
 // GatherKeysFromFiles takes a slice of filenames and returns all the public keys it finds in them with metadata attached.
@@ -116,6 +136,7 @@ func (ctx *ScanContext) ScanKeysForProblems() bool {
 			}
 		}
 	}
+	log.WithFields(log.Fields{"duplicate_keys": len(ctx.Problems.DuplicateKeys), "forbidden_keys": len(ctx.Problems.ForbiddenKeys)}).Info("Problem scan complete")
 	return anyProblems
 }
 
@@ -140,19 +161,19 @@ func (ctx *ScanContext) IsKeyAProblem(k OwnedPubKey) (bool, PubKeyProblem) {
 
 // IsKeyPermitted returns whether the public key in k is one allowed to be anywhere.
 func (ctx *ScanContext) IsKeyPermitted(k OwnedPubKey) bool {
-	return IsKeyInSlice(k, ctx.Params.PermittedKeys)
+	return IsKeyInSlice(k, ctx.PermittedKeys)
 }
 
 // IsKeyForbidden returns whether the public key in k is one forbidden from use by anyone.
 func (ctx *ScanContext) IsKeyForbidden(k OwnedPubKey) bool {
-	return IsKeyInSlice(k, ctx.Params.ForbiddenKeys)
+	return IsKeyInSlice(k, ctx.ForbiddenKeys)
 }
 
 // FindKeysForbidding returns the actual entries in forbiddenkeys that will cause a key to be marked as forbidden.
 // There's almost certainly some further abstraction that would remove redundancy around this file but I'm real tired.
 func (ctx *ScanContext) FindKeysForbidding(k OwnedPubKey) []OwnedPubKey {
 	results := make([]OwnedPubKey, 0)
-	for _, opk := range ctx.Params.ForbiddenKeys {
+	for _, opk := range ctx.ForbiddenKeys {
 		if k.HasSameKeyAs(opk) {
 			results = append(results, opk)
 		}
