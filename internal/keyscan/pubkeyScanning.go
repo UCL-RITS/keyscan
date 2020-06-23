@@ -1,16 +1,8 @@
-package main
+package keyscan
 
 import (
 	log "github.com/sirupsen/logrus"
 )
-
-// FromConfig creates a ScanContext with parameters set from a config file.
-func CreateContextFromConfig(configfile string) *ScanContext {
-	// GetParamsFromFile is in its own file to keep the extra dep contained.
-	params := GetParamsFromConfig(configfile)
-	ctx := &ScanContext{Params: params}
-	return ctx
-}
 
 // Go runs the whole scan based on params.
 func (ctx *ScanContext) Go() {
